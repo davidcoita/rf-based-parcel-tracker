@@ -1,4 +1,6 @@
 #include <SoftwareSerial.h>
+#include <avr/sleep.h>
+#include <avr/wdt.h>
 #include "beacon.h"
 
 SoftwareSerial ble(2, 1);
@@ -8,11 +10,25 @@ BeaconPacket beacon = {
     .sequence_num = 0
 };
 
+const int SLEEP_TIME = 60;
+volatile bool wakeup = false;
+
+ISR(WDT_vect) {
+  wakeup = true;
+}
+
 void setup() {
+    cli();
+    wdt_reset();
+    MCUSR &= ~(1<<WDRF);
+    WDTCR |= (1<<WDCE) | (1<<WDE);
+    WDTCR = 0x00;
+    sei();
+    
     CLKPR = 0x80;
     CLKPR = 0x02;
     
-    ble.begin(9600);
+    ble.begin(2400);
     delay(2000);
     
     char nameCmd[30];
@@ -27,7 +43,32 @@ void setup() {
     delay(500);
 }
 
+int getSleepCycles(int sleepTime) {
+  return sleepTime / 8;
+}
+
+void enterSleep() {
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  
+  cli();
+  wdt_reset();
+  MCUSR &= ~(1<<WDRF);
+  WDTCR |= (1<<WDCE) | (1<<WDE);
+  WDTCR = (1<<WDIE) | (1<<WDP3) | (1<<WDP0);
+  sei();
+  
+  sleep_enable();
+  sleep_cpu();
+  sleep_disable();
+  
+  wdt_disable();
+}
+
 void loop() {
     beacon.sequence_num++;
-    delay(10000);
+    
+    int cycles = getSleepCycles(SLEEP_TIME);
+    for(int i = 0; i < cycles; i++) {
+        enterSleep();
+    }
 }
