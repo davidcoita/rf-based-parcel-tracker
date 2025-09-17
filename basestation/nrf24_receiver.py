@@ -6,8 +6,8 @@ from datetime import datetime
 import sys
 
 class NRF24Receiver:
-    
-    def __init__(self):
+    def __init__(self, station_id=1):
+        self.station_id = station_id
         self.h = lgpio.gpiochip_open(0)
         self.CE = 25
         self.CSN = 8
@@ -20,8 +20,18 @@ class NRF24Receiver:
         
         self.tracked_devices = {}
         self.packet_count = {}
+        self.next_device_id = (station_id << 24) | 0x00000001
+        self.log_file = f"nrf24_station{station_id}_log.csv"
+        
+        with open(self.log_file, "w") as f:
+            f.write("timestamp,station_id,device_id,sequence,status\n")
         
         self.init_radio()
+    
+    def assign_device_id(self):
+        device_id = self.next_device_id
+        self.next_device_id += 1
+        return device_id
     
     def write_register(self, reg, value):
         lgpio.gpio_write(self.h, self.CSN, 0)
@@ -39,7 +49,7 @@ class NRF24Receiver:
         time.sleep(0.1)
         
         self.write_register(0x00, 0x0F)
-        self.write_register(0x01, 0x00)
+        self.write_register(0x01, 0x3F)
         self.write_register(0x02, 0x03)
         self.write_register(0x03, 0x03)
         self.write_register(0x04, 0x5F)
@@ -50,6 +60,10 @@ class NRF24Receiver:
         address = [0xE7, 0xE7, 0xE7, 0xE7, 0xE7]
         lgpio.gpio_write(self.h, self.CSN, 0)
         self.spi.xfer2([0x2A] + address)
+        lgpio.gpio_write(self.h, self.CSN, 1)
+        
+        lgpio.gpio_write(self.h, self.CSN, 0)
+        self.spi.xfer2([0x20] + address)
         lgpio.gpio_write(self.h, self.CSN, 1)
         
         self.write_register(0x07, 0x70)
@@ -65,6 +79,26 @@ class NRF24Receiver:
         lgpio.gpio_write(self.h, self.CSN, 1)
         return payload[1:7]
     
+    def send_id_assignment(self, device_id):
+        lgpio.gpio_write(self.h, self.CE, 0)
+        self.write_register(0x00, 0x0E)
+        
+        cmd_packet = struct.pack('<IB', device_id, 0x01)
+        cmd_packet = cmd_packet + b'\x00' * (6 - len(cmd_packet))
+        
+        lgpio.gpio_write(self.h, self.CSN, 0)
+        self.spi.xfer2([0xA0] + list(cmd_packet))
+        lgpio.gpio_write(self.h, self.CSN, 1)
+        
+        lgpio.gpio_write(self.h, self.CE, 1)
+        time.sleep(0.001)
+        lgpio.gpio_write(self.h, self.CE, 0)
+        
+        self.write_register(0x00, 0x0F)
+        lgpio.gpio_write(self.h, self.CE, 1)
+        
+        print(f"  └─ Sent ID assignment: 0x{device_id:08X}")
+    
     def check_packet_loss(self, device_id, sequence):
         if device_id in self.packet_count:
             expected = (self.packet_count[device_id] + 1) % 65536
@@ -73,6 +107,10 @@ class NRF24Receiver:
                 return lost
         return 0
     
+    def log_packet(self, timestamp, device_id, sequence, status):
+        with open(self.log_file, "a") as f:
+            f.write(f"{timestamp},{self.station_id},{device_id:08X},{sequence},{status}\n")
+    
     def process_packet(self, payload):
         try:
             device_id = struct.unpack('<I', bytes(payload[0:4]))[0]
@@ -80,9 +118,18 @@ class NRF24Receiver:
             
             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
             
+            if device_id == 0xFFFFFFFF:
+                new_id = self.assign_device_id()
+                print(f"[{timestamp}] NEW UNASSIGNED DEVICE")
+                print(f"  ├─ Temp ID: 0x{device_id:08X}")
+                print(f"  ├─ Assigned ID: 0x{new_id:08X}")
+                self.send_id_assignment(new_id)
+                self.log_packet(timestamp, new_id, sequence, "assigned")
+                return
+            
             lost = self.check_packet_loss(device_id, sequence)
             if lost > 0:
-                print(f"  └─ Packet loss detected: {lost} packets")
+                print(f"  └─ Packet loss: {lost} packets")
             
             self.packet_count[device_id] = sequence
             
@@ -103,30 +150,16 @@ class NRF24Receiver:
             print(f"  ├─ Sequence: {sequence}")
             print(f"  └─ Total packets: {count}")
             
-            self.log_packet(timestamp, device_id, sequence, count)
+            self.log_packet(timestamp, device_id, sequence, status.lower())
             
         except Exception as e:
             print(f"  └─ Error processing packet: {e}")
     
-    def log_packet(self, timestamp, device_id, sequence, count):
-        try:
-            with open("nrf24_log.csv", "a") as f:
-                f.write(f"{timestamp},{device_id:08X},{sequence},{count}\n")
-        except Exception as e:
-            print(f"  └─ Logging error: {e}")
-    
     def listen(self):
         print("=" * 70)
-        print("nRF24L01+ Parcel Tracking Receiver")
+        print(f"nRF24L01+ Base Station {self.station_id}")
         print("=" * 70)
         print("\nListening for beacon packets...\n")
-        
-        try:
-            with open("nrf24_log.csv", "w") as f:
-                f.write("timestamp,device_id,sequence,packet_count\n")
-            print("Created nrf24_log.csv for data logging\n")
-        except Exception as e:
-            print(f"Warning: Could not create log file: {e}\n")
         
         try:
             while True:
@@ -151,16 +184,13 @@ class NRF24Receiver:
         print(f"\nTotal devices tracked: {len(self.tracked_devices)}\n")
         
         if self.tracked_devices:
-            print("Device Details:")
-            print("-" * 70)
             for device_id, info in self.tracked_devices.items():
                 print(f"\nDevice ID: 0x{device_id:08X}")
                 print(f"  ├─ First seen: {info['first_seen']}")
                 print(f"  ├─ Total packets: {info['packet_count']}")
                 print(f"  └─ Last sequence: {self.packet_count.get(device_id, 0)}")
         
-        print("\n" + "=" * 70)
-        print("Data logged to: nrf24_log.csv")
+        print(f"\nData logged to: {self.log_file}")
     
     def cleanup(self):
         lgpio.gpio_write(self.h, self.CE, 0)
@@ -168,7 +198,9 @@ class NRF24Receiver:
         self.spi.close()
 
 if __name__ == "__main__":
-    receiver = NRF24Receiver()
+    station_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+    
+    receiver = NRF24Receiver(station_id)
     try:
         receiver.listen()
     except KeyboardInterrupt:
