@@ -1,12 +1,15 @@
 #include <SoftwareSerial.h>
 #include <avr/sleep.h>
 #include <avr/wdt.h>
+#include <EEPROM.h>
 #include "beacon.h"
+
+#define EEPROM_ID_ADDR 0
 
 SoftwareSerial ble(2, 1);
 
 BeaconPacket beacon = {
-    .device_id = 0x00000001,
+    .device_id = UNASSIGNED_ID,
     .sequence_num = 0
 };
 
@@ -27,6 +30,11 @@ void setup() {
     
     CLKPR = 0x80;
     CLKPR = 0x02;
+    
+    EEPROM.get(EEPROM_ID_ADDR, beacon.device_id);
+    if (beacon.device_id == 0 || beacon.device_id == 0xFFFFFFFF) {
+        beacon.device_id = UNASSIGNED_ID;
+    }
     
     ble.begin(2400);
     delay(2000);

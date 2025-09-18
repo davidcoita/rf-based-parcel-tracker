@@ -1,14 +1,16 @@
 #include <SoftwareSerial.h>
 #include <avr/sleep.h>
 #include <avr/wdt.h>
+#include <EEPROM.h>
 #include "beacon.h"
 
 #define HC12_SET_PIN 3
+#define EEPROM_ID_ADDR 0
 
 SoftwareSerial hc12(2, 1);
 
 BeaconPacket beacon = {
-    .device_id = 0x00000001,
+    .device_id = UNASSIGNED_ID,
     .sequence_num = 0
 };
 
@@ -35,6 +37,11 @@ void setup() {
   
   hc12.begin(2400);
   delay(100);
+  
+  EEPROM.get(EEPROM_ID_ADDR, beacon.device_id);
+  if (beacon.device_id == 0 || beacon.device_id == 0xFFFFFFFF) {
+    beacon.device_id = UNASSIGNED_ID;
+  }
 }
 
 int getSleepCycles(int sleepTime) {
@@ -49,6 +56,22 @@ void hc12Sleep() {
 void hc12Wake() {
   digitalWrite(HC12_SET_PIN, HIGH);
   delay(120);
+}
+
+void checkForCommand() {
+  if (hc12.available() >= 5) {
+    uint8_t buffer[5];
+    hc12.readBytes(buffer, 5);
+    
+    uint32_t assigned_id = *((uint32_t*)buffer);
+    uint8_t command = buffer[4];
+    
+    if (command == 0x01 && beacon.device_id == UNASSIGNED_ID) {
+      beacon.device_id = assigned_id;
+      EEPROM.put(EEPROM_ID_ADDR, beacon.device_id);
+      delay(10);
+    }
+  }
 }
 
 void enterSleep() {
@@ -70,6 +93,8 @@ void enterSleep() {
 
 void loop() {
   hc12Wake();
+  
+  checkForCommand();
   
   beacon.sequence_num++;
   hc12.write((uint8_t*)&beacon, sizeof(BeaconPacket));
