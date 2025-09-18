@@ -1,23 +1,32 @@
 #include <HardwareSerial.h>
+#include <EEPROM.h>
 #include "beacon.h"
 
 #define HC12_SET_PIN 2
+#define EEPROM_ID_ADDR 0
 
 HardwareSerial hc12(1);
 
 BeaconPacket beacon = {
-    .device_id = 0x00000001,
+    .device_id = UNASSIGNED_ID,
     .sequence_num = 0
 };
 
 const int SLEEP_TIME = 60;
 
 void setup() {
+  EEPROM.begin(512);
+  
   pinMode(HC12_SET_PIN, OUTPUT);
   digitalWrite(HC12_SET_PIN, HIGH);
   
   hc12.begin(9600, SERIAL_8N1, 0, 1);
   delay(100);
+  
+  EEPROM.get(EEPROM_ID_ADDR, beacon.device_id);
+  if (beacon.device_id == 0 || beacon.device_id == 0xFFFFFFFF) {
+    beacon.device_id = UNASSIGNED_ID;
+  }
 }
 
 void hc12Sleep() {
@@ -30,8 +39,27 @@ void hc12Wake() {
   delay(120);
 }
 
+void checkForCommand() {
+  if (hc12.available() >= 5) {
+    uint8_t buffer[5];
+    hc12.readBytes(buffer, 5);
+    
+    uint32_t assigned_id = *((uint32_t*)buffer);
+    uint8_t command = buffer[4];
+    
+    if (command == 0x01 && beacon.device_id == UNASSIGNED_ID) {
+      beacon.device_id = assigned_id;
+      EEPROM.put(EEPROM_ID_ADDR, beacon.device_id);
+      EEPROM.commit();
+      delay(10);
+    }
+  }
+}
+
 void loop() {
   hc12Wake();
+  
+  checkForCommand();
   
   beacon.sequence_num++;
   hc12.write((uint8_t*)&beacon, sizeof(BeaconPacket));
