@@ -1,10 +1,10 @@
 # RF-Based Parcel Tracking System
 
-Low-cost tracking modules for last-mile delivery using 433MHz, 2.4GHz nRF24L01+, and BLE protocols.
+Low-cost tracking modules for parcel delivery using 433MHz, 2.4GHz nRF24L01+, and BLE protocols.
 
 ## Overview
 
-Research implementation comparing RF technologies for parcel tracking in delivery vehicles. Base station assigns unique IDs to tracking modules, monitors beacons, and logs delivery events through signal loss detection.
+Research implementation comparing RF technologies for parcel tracking in delivery vehicles. Base station assigns unique IDs to tracking modules and monitors beacons.
 
 ## Hardware Configurations
 
@@ -15,10 +15,6 @@ Research implementation comparing RF technologies for parcel tracking in deliver
 **Receiver (Base Station)**
 - Raspberry Pi 5
 - Protocol-specific receiver modules
-
-## Protocol Details
-
-**Beacon Structure** (6 bytes)
 
 ## Requirements
 
@@ -35,7 +31,12 @@ Run base station script with desired id:
 python hc12_receiver.py 1
 python nrf24_receiver.py 1
 python ble_receiver.py 1
-
 ```
 To flash the flash transmitter:
 Use ArduinoIDE to upload appropriate .ino for your MCU + module combination.
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+This project is part of the implementation of a bachelors thesis on RF-based parcel tracking systems.
