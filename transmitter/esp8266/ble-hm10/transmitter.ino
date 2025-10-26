@@ -4,7 +4,7 @@
 
 #define EEPROM_ID_ADDR 0
 
-SoftwareSerial ble(D2, D1);
+SoftwareSerial ble(D1, D2);
 
 BeaconPacket beacon = {
     .device_id = UNASSIGNED_ID,
